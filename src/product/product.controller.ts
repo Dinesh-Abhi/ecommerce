@@ -139,118 +139,23 @@ export class ProductController {
       };
     }
 
-    const csvFilePath = `./uploads/${file.originalname}`;
+    const csvFilePath = path.join(__dirname, '../../uploads', file.originalname);
     fs.writeFileSync(csvFilePath, file.buffer);
-    return this.processCsvAndSaveProducts(csvFilePath);
-  }
 
-  private async processCsvAndSaveProducts(csvFilePath: string): Promise<any> {
-    const products = [];
-    const invalidRows = [];
-  
-    return new Promise((resolve, reject) => {
-      fs.createReadStream(csvFilePath)
-        .pipe(csvParser())
-        .on('data', async (row) => {
-          logger.info(`Processing row: ${JSON.stringify(row)}`);
-  
-          try {
-            const { name, price, stock, image } = row;
-  
-            // Validate each row
-            if (!name || !price || !stock || !image) {
-              invalidRows.push(JSON.stringify(row));
-              logger.warn(`Invalid row (missing fields): ${JSON.stringify(row)}`);
-              return;
-            }
-  
-            if (parseFloat(price) <= 0 || parseInt(stock) < 0) {
-              invalidRows.push(JSON.stringify(row));
-              logger.warn(`Invalid row (invalid price or stock): ${JSON.stringify(row)}`);
-              return;
-            }
-  
-            // Validate image URL
-            logger.info(`Validating image URL: ${image}`);
-            const imagePath = await this.saveImageFromUrl(image);
-            logger.info(`Image saved successfully: ${imagePath}`);
-  
-            const product = {
-              name,
-              price: parseFloat(price),
-              stock: parseInt(stock),
-              image: imagePath,
-            };
-  
-            // Add the product only after the image has been downloaded
-            products.push(product);
-          } catch (error) {
-            invalidRows.push(JSON.stringify(row));
-            logger.error(`Error processing row: ${JSON.stringify(row)}, Error: ${error.message}`);
-          }
-        })
-        .on('end', async () => {
-          try {
-            logger.info(`CSV parsing finished. Total products: ${products.length}, Invalid rows: ${invalidRows.length}`);
-  
-            if (products.length > 0) {
-              // Insert valid products into the database
-              await this.productService.bulkAddProducts(products);
-              resolve({
-                Error: false,
-                message: `${products.length} products added successfully.`,
-              });
-            } else if (invalidRows.length > 0) {
-              resolve({
-                Error: true,
-                message: `Some rows are invalid. Please check the file. Invalid rows: ${invalidRows.length}`,
-                invalidRows,
-              });
-            } else {
-              resolve({
-                Error: false,
-                message: 'No valid products found in the CSV file.',
-              });
-            }
-          } catch (error) {
-            reject({
-              Error: true,
-              message: 'Error saving products to the database.',
-              details: error.message,
-            });
-          }
-        })
-        .on('error', (error) => {
-          reject({
-            Error: true,
-            message: 'Error reading CSV file.',
-            details: error.message,
-          });
-        });
-    });
-  }
-  
-  private async saveImageFromUrl(imageUrl: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const ext = path.extname(imageUrl);
-      const fileName = `${Date.now()}${ext}`;
-      const filePath = path.join(__dirname, '../../uploads/product-images', fileName);
-  
-      const file = createWriteStream(filePath);
-      const protocol = imageUrl.startsWith('https') ? https : http;
-  
-      protocol.get(imageUrl, (response) => {
-        response.pipe(file);
-        file.on('finish', () => {
-          file.close();
-          resolve(filePath);
-        });
-      }).on('error', (err) => {
-        fs.unlink(filePath, () => {});
-        logger.error(`Failed to download image: ${imageUrl}, Error: ${err.message}`);
-        reject(`Failed to download image: ${err.message}`);
-      });
-    });
+    try {
+      // Call the service method to process the CSV
+      const result = await this.productService.bulkAddProductsFromCSV(csvFilePath);
+      return result;
+    } catch (error) {
+      return {
+        Error: true,
+        message: 'Error during bulk upload.',
+        details: error.message,
+      };
+    } finally {
+      // Optionally, delete the temporary CSV file after processing
+      fs.unlinkSync(csvFilePath);
+    }
   }
   
 }
